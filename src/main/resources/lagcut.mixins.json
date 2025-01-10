@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "package": "com.lagcut.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "MobEntityAccessor",
+    "aithrottling.GoalSelectorMixin",
+    "aithrottling.ServerWorldMixin",
+    "itemstacking.ItemEntityMixin",
+    "mobstacking.EntityStackNBTAccessor",
+    "mobstacking.LivingEntityStackMixin",
+    "other.MobEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+	}
+}
