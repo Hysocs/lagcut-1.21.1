@@ -8,8 +8,12 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.entity.decoration.ArmorStandEntity
+import net.minecraft.registry.Registries
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.world.ServerWorld
+import net.minecraft.sound.SoundCategory
+import net.minecraft.sound.SoundEvent
+import net.minecraft.util.Identifier
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
@@ -80,101 +84,18 @@ object ClearLag {
         val specialFlags: Map<String, Boolean> = emptyMap()
     )
 
-    private fun extractPokemonMetadata(pokemon: Any, pokemonInstance: Any): PokemonMetadata {
-        val aspects = mutableListOf<String>()
-        val nbtData = mutableMapOf<String, Any>()
-        val specialFlags = mutableMapOf<String, Boolean>()
+    private fun shouldExcludeEntity(entity: net.minecraft.entity.Entity): Boolean {
+        val entityType = entity.type.toString()
 
-        try {
-            // Extract form aspects and check for non-normal forms
-            ReflectionCache.methods["getForm"]?.invoke(pokemonInstance)?.let { form ->
-                val formName = ReflectionCache.methods["getFormName"]?.invoke(form)?.toString()?.lowercase() ?: ""
-                if (formName !in listOf("", "normal")) {
-                    aspects.add("hasform")
-                }
-
-                ReflectionCache.methods["getAspects"]?.invoke(form)?.let { formAspects ->
-                    if (formAspects is Collection<*>) {
-                        aspects.addAll(formAspects.filterNotNull().map { it.toString().lowercase() })
-                    }
-                }
-            }
-
-            // Extract NBT data
-            if (pokemon is net.minecraft.entity.Entity) {
-                val nbt = net.minecraft.nbt.NbtCompound()
-                pokemon.writeNbt(nbt)
-                val pokemonNbt = nbt.getCompound("Pokemon")
-
-                if (pokemonNbt != null) {
-                    // Add common value-based aspects
-                    val level = pokemonNbt.getInt("Level")
-                    when {
-                        level == 100 -> aspects.add("maxlevel")
-                        level >= 90 -> aspects.add("highlevel")
-                        level <= 5 -> aspects.add("lowlevel")
-                    }
-
-                    if (pokemonNbt.getInt("Friendship") >= 160) {
-                        aspects.add("highfriendship")
-                    }
-
-                    // Check IVs
-                    val ivs = pokemonNbt.getCompound("IVs")
-                    if (ivs != null) {
-                        var perfectIVs = 0
-                        listOf("HP", "Attack", "Defence", "SpecialAttack", "SpecialDefence", "Speed").forEach { stat ->
-                            if (ivs.getInt(stat) == 31) perfectIVs++
-                        }
-                        when {
-                            perfectIVs == 6 -> aspects.add("6iv")
-                            perfectIVs >= 5 -> aspects.add("5iv")
-                            perfectIVs >= 4 -> aspects.add("4iv")
-                        }
-                    }
-
-                    // Check for specific valuable traits
-                    pokemonNbt.getString("TeraType").let {
-                        if (it.isNotEmpty()) aspects.add("hastera")
-                    }
-
-                    pokemonNbt.getString("Ability").let { ability ->
-                        if (ability.contains("Hidden", ignoreCase = true)) {
-                            aspects.add("hiddenability")
-                        }
-                    }
-
-                    // Store NBT data for advanced pattern matching
-                    listOf("Species", "FormId", "Level", "TeraType", "Ability", "Nature", "Gender").forEach { key ->
-                        when {
-                            pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.STRING_TYPE.toInt()) ->
-                                nbtData[key.lowercase()] = pokemonNbt.getString(key)
-                            pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.INT_TYPE.toInt()) ->
-                                nbtData[key.lowercase()] = pokemonNbt.getInt(key)
-                        }
-                    }
-                }
-            }
-
-            // Set special flags with consistent naming
-            specialFlags["shiny"] = ReflectionCache.methods["isShiny"]?.invoke(pokemonInstance) as? Boolean == true
-            specialFlags["owned"] = ReflectionCache.methods["getOwner"]?.invoke(pokemonInstance) != null
-            specialFlags["battling"] = ReflectionCache.methods["isBattling"]?.invoke(pokemon) as? Boolean == true
-
-            // Add label-based flags with consistent naming
-            ReflectionCache.hasLabelsMethod?.let { method ->
-                listOf("legendary", "mythical", "ultrabeast").forEach { label ->
-                    specialFlags[label] = method.invoke(pokemonInstance, arrayOf(label)) as? Boolean == true
-                }
-            }
-
-        } catch (e: Exception) {
-            logDebug("[DEBUG] Error extracting Pokemon metadata: ${e.message}")
+        // First check if the entity type is excluded
+        if (config.excludedEntityTypes.any { it.equals(entityType, ignoreCase = true) }) {
+            logDebug("[DEBUG] Entity type $entityType is in excludedEntityTypes")
+            return true
         }
 
-        return PokemonMetadata(aspects, nbtData, specialFlags)
+        // Then check specific entity exclusions
+        return isEntityInBlocklist(entityType)
     }
-
 
     private fun shouldPreservePokemon(pokemon: Any, pokemonInstance: Any, pokemonName: String): Boolean {
         if (isEntityInBlocklist(pokemonName, true)) {
@@ -182,36 +103,52 @@ object ClearLag {
             return true
         }
 
-        val metadata = extractPokemonMetadata(pokemon, pokemonInstance)
+        try {
+            // Check for matching labels using the hasLabels method
+            ReflectionCache.hasLabelsMethod?.let { method ->
+                val matchingLabels = config.excludedLabels.filter { label ->
+                    method.invoke(pokemonInstance, arrayOf(label)) as? Boolean == true
+                }
+                if (matchingLabels.isNotEmpty()) {
+                    logDebug("[DEBUG] Preserving Pokemon due to labels: $matchingLabels")
+                    return true
+                }
+            }
 
-        // Check aspects first
-        val matchingAspects = config.excludedAspects.filter { aspect ->
-            metadata.aspects.any { it == aspect.lowercase() }
-        }
-        if (matchingAspects.isNotEmpty()) {
-            logDebug("[DEBUG] Preserving Pokemon due to aspects: $matchingAspects")
-            return true
-        }
+            // Check special conditions from NBT data
+            val nbt = net.minecraft.nbt.NbtCompound()
+            (pokemon as? net.minecraft.entity.Entity)?.writeNbt(nbt)
+            val pokemonNbt = nbt.getCompound("Pokemon")
 
-        // Check NBT patterns with exact matching
-        val matchingNbtPatterns = config.nbtExclusionPatterns.filter { pattern ->
-            val (key, value) = pattern.split("=", limit = 2)
-            metadata.nbtData[key.lowercase()]?.toString()?.lowercase() == value.lowercase()
-        }
-        if (matchingNbtPatterns.isNotEmpty()) {
-            logDebug("[DEBUG] Preserving Pokemon due to NBT patterns: $matchingNbtPatterns")
-            return true
-        }
+            if (pokemonNbt != null) {
+                // Check NBT patterns with exact matching
+                val matchingNbtPatterns = config.nbtExclusionPatterns.filter { pattern ->
+                    val (key, value) = pattern.split("=", limit = 2)
+                    when {
+                        pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.STRING_TYPE.toInt()) ->
+                            pokemonNbt.getString(key).equals(value, ignoreCase = true)
+                        pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.INT_TYPE.toInt()) ->
+                            pokemonNbt.getInt(key).toString() == value
+                        else -> false
+                    }
+                }
+                if (matchingNbtPatterns.isNotEmpty()) {
+                    logDebug("[DEBUG] Preserving Pokemon due to NBT patterns: $matchingNbtPatterns")
+                    return true
+                }
+            }
 
-        // Check special flags with simplified naming
-        if (metadata.specialFlags.any { (flag, value) ->
-                value && config.excludedAspects.contains(flag)
-            }) {
-            logDebug("[DEBUG] Preserving Pokemon due to special flags")
-            return true
-        }
+            // Check other special conditions
+            if (ReflectionCache.methods["isBattling"]?.invoke(pokemon) as? Boolean == true) {
+                logDebug("[DEBUG] Preserving battling Pokemon")
+                return true
+            }
 
-        return false
+            return false
+        } catch (e: Exception) {
+            logDebug("[DEBUG] Error checking Pokemon preservation status: ${e.message}")
+            return false // Default to not preserving if we encounter an error
+        }
     }
 
     private fun getPokemonName(pokemonInstance: Any?): String {
@@ -251,6 +188,7 @@ object ClearLag {
                 regex.find(type)?.groupValues?.get(1) ?: type
             } else {
                 type.removePrefix("entity.minecraft.")
+                    .removePrefix("entity.cobblemon.")
             }
         }
 
@@ -272,6 +210,11 @@ object ClearLag {
             .filter { ReflectionCache.pokemonEntityClass.isInstance(it) }
             .filter { pokemon ->
                 try {
+                    // First check entity type exclusions
+                    if (shouldExcludeEntity(pokemon as net.minecraft.entity.Entity)) {
+                        return@filter false
+                    }
+
                     if (bypassChecks) return@filter true
 
                     val pokemonInstance = ReflectionCache.methods["getPokemon"]!!.invoke(pokemon)
@@ -294,8 +237,9 @@ object ClearLag {
             .filter { entity ->
                 when {
                     ReflectionCache.pokemonEntityClass?.isInstance(entity) == true -> false
-                    entity.type.toString() == "entity.taterzens.npc" && config.preserveTarterzens -> false
-                    else -> !isEntityInBlocklist(entity.type.toString())
+                    config.preservePersistentEntities && entity is MobEntity && entity.isPersistent -> false
+                    shouldExcludeEntity(entity) -> false
+                    else -> true
                 }
             }
             .onEach { it.discard() }
@@ -305,10 +249,12 @@ object ClearLag {
     private fun clearItemEntities(world: ServerWorld): Int {
         return world.iterateEntities()
             .filterIsInstance<ItemEntity>()
-            .filter { !isEntityInBlocklist(it.type.toString()) }
+            .filter { !shouldExcludeEntity(it) }
             .onEach { it.discard() }
             .count()
     }
+
+    private var lastBroadcastSoundSecond = -1
 
     private fun handleClearLag(server: MinecraftServer) {
         clearLagTickCounter++
@@ -319,7 +265,47 @@ object ClearLag {
             secondsRemaining != lastBroadcastSecond &&
             secondsRemaining > 0
         ) {
-            broadcast(server, config.broadcastMessages[secondsRemaining]!!)
+            // DEBUG ADD: print out the raw message from config
+            val rawMessage = config.broadcastMessages[secondsRemaining]!!
+            logDebug("[DEBUG] handleClearLag: broadcast message for $secondsRemaining seconds is '$rawMessage'")
+            broadcast(server, rawMessage)
+            lastBroadcastSecond = secondsRemaining
+        }
+
+        // Play sound once per second
+        if (config.broadcastsounds.containsKey(secondsRemaining) &&
+            secondsRemaining != lastBroadcastSoundSecond &&
+            secondsRemaining > 0
+        ) {
+            val soundSetting = config.broadcastsounds[secondsRemaining]!!
+
+            val soundId = Identifier.tryParse(soundSetting.sound)
+            if (soundId != null) {
+                val soundEvent = Registries.SOUND_EVENT.get(soundId)
+                if (soundEvent != null) {
+                    server.playerManager.playerList.forEach { player ->
+                        player.world.playSound(
+                            null,
+                            player.blockPos,
+                            soundEvent,
+                            SoundCategory.PLAYERS,
+                            soundSetting.volume.toFloat(),
+                            soundSetting.pitch.toFloat()
+                        )
+                    }
+                }
+            }
+            // Mark that we have played the sound at this second
+            lastBroadcastSoundSecond = secondsRemaining
+        }
+
+// The existing broadcast check remains unchanged, e.g.:
+        if (config.broadcastMessages.containsKey(secondsRemaining) &&
+            secondsRemaining != lastBroadcastSecond &&
+            secondsRemaining > 0
+        ) {
+            val rawMessage = config.broadcastMessages[secondsRemaining]!!
+            broadcast(server, rawMessage)
             lastBroadcastSecond = secondsRemaining
         }
 
@@ -331,14 +317,19 @@ object ClearLag {
     }
 
     fun clearEntities(server: MinecraftServer) {
-        val stats = server.worlds.fold(Triple(0, 0, 0)) { acc, world ->
-            Triple(
-                acc.first + if (Lagcut.isCobblemonPresent && config.clearCobblemonEntities)
-                    clearPokemonEntities(world) else 0,
-                acc.second + if (config.clearMojangEntities) clearMobEntities(world) else 0,
-                acc.third + if (config.clearItemEntities) clearItemEntities(world) else 0
-            )
-        }
+        val stats = server.worlds
+            .filter { world ->
+                val dimensionId = world.registryKey.value.toString()
+                !config.excludedDimensions.any { it.equals(dimensionId, ignoreCase = true) }
+            }
+            .fold(Triple(0, 0, 0)) { acc, world ->
+                Triple(
+                    acc.first + if (Lagcut.isCobblemonPresent && config.clearCobblemonEntities)
+                        clearPokemonEntities(world) else 0,
+                    acc.second + if (config.clearMojangEntities) clearMobEntities(world) else 0,
+                    acc.third + if (config.clearItemEntities) clearItemEntities(world) else 0
+                )
+            }
 
         logDebug("[RATL] Cleared - Pokemon: ${stats.first}, Mobs: ${stats.second}, Items: ${stats.third}")
         broadcast(server, config.broadcastMessages[0]?.replace("<entityamount>",

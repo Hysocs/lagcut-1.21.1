@@ -51,41 +51,68 @@ data class ItemStackingSettings(
     var excludedItems: List<String> = listOf("minecraft:diamond_sword", "minecraft:apple")
 )
 
+data class SoundSettings(
+    val sound: String,
+    val volume: Double,
+    val pitch: Double
+)
+
 data class ClearLagSettings(
     var enabled: Boolean = true,
     var cleanupIntervalTicks: Int = 1200,
     var broadcastMessages: Map<Int, String> = defaultBroadcastMessages,
+    var broadcastsounds: Map<Int, SoundSettings> = defaultSoundSettings,
     var clearCobblemonEntities: Boolean = true,
     var clearMojangEntities: Boolean = true,
     var clearItemEntities: Boolean = true,
-    var preserveTarterzens: Boolean = true,
+    var preservePersistentEntities: Boolean = true,
     var excludedEntities: List<String> = listOf(
         "minecraft:armor_stand",
         "minecraft:chest_minecart",
         "cobblemon:pikachu"
     ),
-    var excludedAspects: List<String> = defaultExcludedAspects,
-    var nbtExclusionPatterns: List<String> = listOf("Level=100")
+    var excludedEntityTypes: List<String> = defaultExcludedEntityTypes,
+    var excludedLabels: List<String> = defaultExcludedLabels,
+    var nbtExclusionPatterns: List<String> = listOf("Level=100"),
+    var excludedDimensions: List<String> = listOf(
+        "minecraft:the_end",
+        "minecraft:the_nether"
+    )
 ) {
     companion object {
         private val defaultBroadcastMessages = mapOf(
-            10 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>10</bold> seconds.",
-            5 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>5</bold> seconds.",
-            4 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>4</bold> seconds.",
-            3 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>3</bold> seconds.",
-            2 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>2</bold> seconds.",
-            1 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] Entities will clear in <bold>1</bold> second.",
-            0 to "[<hover:Hover for details><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover>] <entityamount> entities have been cleared."
+            10 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>10</bold> seconds",
+            5 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>5</bold> seconds",
+            4 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>4</bold> seconds",
+            3 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>3</bold> seconds",
+            2 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>2</bold> seconds",
+            1 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>1</bold> second",
+            0 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> <entityamount> entities have been cleared"
         )
 
-        private val defaultExcludedAspects = listOf(
-            "shiny",
+        private val defaultSoundSettings = mapOf(
+            5 to SoundSettings("minecraft:block.note_block.hat", 0.2, 0.5),
+            4 to SoundSettings("minecraft:block.note_block.hat", 0.2, 0.5),
+            3 to SoundSettings("minecraft:block.note_block.hat", 0.2, 0.5),
+            2 to SoundSettings("minecraft:block.note_block.hat", 0.2, 0.5),
+            1 to SoundSettings("minecraft:block.note_block.hat", 0.2, 0.5)
+        )
+
+        private val defaultExcludedEntityTypes = listOf(
+            "entity.minecraft.armor_stand",
+            "entity.minecraft.chest_minecart",
+            "entity.taterzens.npc"
+        )
+
+        private val defaultExcludedLabels = listOf(
             "legendary",
-            "owned",
-            "battling",
-            "hasform",
-            "maxlevel",
-            "6iv"
+            "mythical",
+            "ultra_beast",
+            "restricted",
+            "powerhouse",
+            "paradox",
+            "customized_official",
+            "custom"
         )
     }
 }
@@ -178,11 +205,13 @@ object LagCutConfig {
         ),
         footerComments = listOf(
             "End of LagCut Configuration",
-            "For more information, visit: https://github.com/yourusername/lagcut"
+            "For more information, visit: https://github.com/Hysocs/lagcut-1.21.1"
         ),
         sectionComments = mapOf(
             "version" to "WARNING: Do not edit this value - doing so may corrupt your configuration",
             "configId" to "WARNING: Do not edit this value - changing this will create a new configuration file",
+            "clearLag.excludedEntityTypes" to "Use '/lc inspectnearest' to identify entity types that you want to exclude from cleanup",
+            "clearLag.excludedLabels" to "Labels can be found at https://gitlab.com/cable-mc/cobblemon/-/blob/main/common/src/main/kotlin/com/cobblemon/mod/common/api/pokemon/labels/CobblemonPokemonLabels.kt"
         ),
         includeTimestamp = true,
         includeVersion = true

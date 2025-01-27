@@ -2,6 +2,7 @@ package com.lagcut
 
 import com.lagcut.utils.CommandRegistrar
 import com.lagcut.utils.LagCutConfig
+
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.minecraft.server.MinecraftServer
@@ -19,7 +20,6 @@ object Lagcut : ModInitializer {
 		CommandRegistrar.registerCommands()
 		EntityStackManager.initialize()
 		ItemStackingManager.initialize()
-
 		// Detect Cobblemon presence
 		detectCobblemon()
 
