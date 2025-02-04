@@ -5,6 +5,7 @@ import com.lagcut.api.StackDataProvider;
 import com.lagcut.utils.LagCutConfig;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
@@ -52,7 +53,7 @@ public class LivingEntityStackMixin {
     private void updateNametagVisibility(LivingEntity entity, StackDataProvider provider) {
         boolean currentVisibility = entity.isCustomNameVisible();
         boolean hideNametags = LagCutConfig.INSTANCE.getConfig()
-                .getEntityBehavior()
+                .getEntityStacking()
                 .getHideNametagsThroughBlocks();
 
         if (!hideNametags) {
@@ -108,13 +109,22 @@ public class LivingEntityStackMixin {
                 provider.isStackedCompat() &&
                 provider.getStackSizeCompat() > 1) {
 
+            // Get the attacker if it's a player
+            PlayerEntity attacker = null;
+            if (damageSource.getAttacker() instanceof PlayerEntity) {
+                attacker = (PlayerEntity) damageSource.getAttacker();
+            }
+
             EntityStackManager.INSTANCE.handleDeathAtPosition(
                     self,
                     provider.getStackSizeCompat(),
                     self.getPos(),
                     self.getYaw(),
-                    self.getPitch()
+                    self.getPitch(),
+                    attacker  // Pass the attacker
             );
         }
     }
+
+
 }

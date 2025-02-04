@@ -1,5 +1,6 @@
 package com.lagcut.mixin.other;
 
+import com.lagcut.api.StackDataProvider;
 import com.lagcut.utils.LagCutConfig;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.item.ItemStack;
@@ -12,16 +13,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(MobEntity.class)
 public class MobEntityMixin {
 
-    /**
-     * Checks if item pickup is disabled based on configuration.
-     *
-     * @return true if item pickup is disabled, false otherwise.
-     */
     @Unique
     private boolean isItemPickupDisabled() {
-        return !LagCutConfig.INSTANCE.getConfig()
-                .getEntityBehavior()
-                .getAllowItemPickup();
+        MobEntity self = (MobEntity) (Object) this;
+        // Only disable pickup if entity is stacked and config says so
+        return self instanceof StackDataProvider stackProvider &&
+                stackProvider.isStackedCompat() &&
+                !LagCutConfig.INSTANCE.getConfig()
+                        .getEntityStacking()
+                        .getCanStackedEntityPickUpItems();
     }
 
     @Inject(method = "canPickupItem", at = @At("HEAD"), cancellable = true)

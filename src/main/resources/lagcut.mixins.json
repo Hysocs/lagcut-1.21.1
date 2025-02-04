@@ -9,6 +9,9 @@
     "itemstacking.ItemEntityMixin",
     "mobstacking.EntityStackNBTAccessor",
     "mobstacking.LivingEntityStackMixin",
+    "mobstacking.NameTagItemMixin",
+    "mobstacking.SpawnHelperMixin",
+    "mobstacking.SpawnInfoMixin",
     "other.MobEntityMixin"
   ],
   "injectors": {

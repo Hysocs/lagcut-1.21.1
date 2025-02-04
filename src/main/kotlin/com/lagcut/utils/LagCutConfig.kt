@@ -14,19 +14,17 @@ data class LagReductionConfig(
     var debugEnabled: Boolean = true,
     var aiThrottling: AIThrottlingSettings = AIThrottlingSettings(),
     var clearLag: ClearLagSettings = ClearLagSettings(),
-    var entityBehavior: EntityBehaviorSettings = EntityBehaviorSettings(),
     var entityStacking: EntityStackingSettings = EntityStackingSettings(),
-    var itemBehavior: ItemBehaviorSettings = ItemBehaviorSettings(),
     var itemStacking: ItemStackingSettings = ItemStackingSettings()
 ) : ConfigData
 
-data class EntityBehaviorSettings(
-    var allowItemPickup: Boolean = false,
-    val hideNametagsThroughBlocks: Boolean = false
-)
 
 data class EntityStackingSettings(
     var enabled: Boolean = true,
+    val adjustEntityListForStackSize: Boolean = false,
+    val hideNametagsThroughBlocks: Boolean = false,
+    val stackPlayerNamedEntity: Boolean = false,
+    val canStackedEntityPickUpItems: Boolean = true,
     var stackBabyWithAdult: Boolean = false,
     var deleteEntireStackOnKill: Boolean = false,
     var preserveOriginalEntityOnDeath: Boolean = false,
@@ -38,12 +36,10 @@ data class EntityStackingSettings(
     var excludedEntities: List<String> = listOf("minecraft:armor_stand", "minecraft:chest_minecart")
 )
 
-data class ItemBehaviorSettings(
-    var hideNametagsThroughBlocks: Boolean = true
-)
 
 data class ItemStackingSettings(
     var enabled: Boolean = true,
+    var hideNametagsThroughBlocks: Boolean = true,
     var maxStackSize: Int = 99,
     var detectionRadius: Double = 1.5,
     var stackNameFormat: String = "<itemname>: <itemamount><bold>x</bold>",
@@ -58,7 +54,7 @@ data class SoundSettings(
 )
 
 data class ClearLagSettings(
-    var enabled: Boolean = true,
+    var enabled: Boolean = false,
     var cleanupIntervalTicks: Int = 1200,
     var broadcastMessages: Map<Int, String> = defaultBroadcastMessages,
     var broadcastsounds: Map<Int, SoundSettings> = defaultSoundSettings,
@@ -211,7 +207,9 @@ object LagCutConfig {
             "version" to "WARNING: Do not edit this value - doing so may corrupt your configuration",
             "configId" to "WARNING: Do not edit this value - changing this will create a new configuration file",
             "clearLag.excludedEntityTypes" to "Use '/lc inspectnearest' to identify entity types that you want to exclude from cleanup",
-            "clearLag.excludedLabels" to "Labels can be found at https://gitlab.com/cable-mc/cobblemon/-/blob/main/common/src/main/kotlin/com/cobblemon/mod/common/api/pokemon/labels/CobblemonPokemonLabels.kt"
+            "clearLag.excludedLabels" to "Labels can be found at https://gitlab.com/cable-mc/cobblemon/-/blob/main/common/src/main/kotlin/com/cobblemon/mod/common/api/pokemon/labels/CobblemonPokemonLabels.kt",
+            "entityStacking.adjustEntityListForStackSize" to "This experimental feature adjusts the entity list to reflect stacked entities. While functional in testing, it may cause compatibility issues with custom entities and other mods.",
+            "itemStacking.maxStackSize" to "The stack size is limited to 99 to maintain compatibility across mods. While I could implement larger stacks, many mods that read NBT data or handle item stacks would break due to changes introduced in Minecraft 1.20. This limitation ensures broad compatibility with other mods.",
         ),
         includeTimestamp = true,
         includeVersion = true

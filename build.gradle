@@ -90,7 +90,7 @@ dependencies {
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	//modImplementation files('libs/fabric-1.6.0+1.21.1-20241205.105148-214.jar')
 	//modImplementation("com.cobblemon:fabric:${property("cobblemon_version")}")
-	modImplementation "com.cobblemon:fabric:1.6.0+1.21.1-SNAPSHOT"
+	modImplementation "com.cobblemon:fabric:1.6.1+1.21.1"
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
@@ -98,7 +98,9 @@ dependencies {
 	modImplementation('me.lucko:fabric-permissions-api:0.2-SNAPSHOT')
 	modImplementation("curse.maven:cyber-permissions-407695:4640544")
 
-	modImplementation(files("libs/blanketutils-1.0.0.jar"))
+	modCompileOnly(files("libs/blanketutils-1.0.0.jar"))
+
+
 }
 
 processResources {

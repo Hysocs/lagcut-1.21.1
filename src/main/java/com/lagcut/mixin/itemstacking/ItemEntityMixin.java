@@ -14,8 +14,10 @@ import net.minecraft.world.RaycastContext;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,7 +48,7 @@ public class ItemEntityMixin {
 
     @Unique
     private void handleNametagVisibility(ItemEntity itemEntity) {
-        boolean hideNametags = LagCutConfig.INSTANCE.getConfig().getItemBehavior().getHideNametagsThroughBlocks();
+        boolean hideNametags = LagCutConfig.INSTANCE.getConfig().getItemStacking().getHideNametagsThroughBlocks();
         if (!hideNametags) {
             itemEntity.setCustomNameVisible(true);
             return;
@@ -100,6 +102,15 @@ public class ItemEntityMixin {
 
             item.getWorld().spawnEntity(overflowEntity);
             ItemStackingManager.INSTANCE.tryMergeItemEntities(overflowEntity);
+        }
+    }
+
+    @Inject(method = "cannotPickup", at = @At("HEAD"), cancellable = true)
+    private void onCannotPickup(CallbackInfoReturnable<Boolean> cir) {
+        ItemEntity self = (ItemEntity) (Object) this;
+        // Force allow pickup even with custom name
+        if (self.hasCustomName()) {
+            cir.setReturnValue(false);  // false means it CAN be picked up
         }
     }
 }

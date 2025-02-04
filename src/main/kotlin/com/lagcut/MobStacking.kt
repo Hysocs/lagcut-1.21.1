@@ -9,6 +9,7 @@ import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.EquipmentSlot
 import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.passive.PassiveEntity
 import net.minecraft.entity.player.PlayerEntity // Import PlayerEntity
 import net.minecraft.item.ItemStack
 import net.minecraft.server.world.ServerWorld
@@ -81,7 +82,8 @@ object EntityStackManager {
         currentStackSize: Int,
         pos: Vec3d,
         yaw: Float,
-        pitch: Float
+        pitch: Float,
+        attacker: PlayerEntity? = null  // Add attacker parameter
     ) {
         if (!config.enabled || currentStackSize <= MIN_STACK_SIZE ||
             entityTracker[entity.uuid] == EntityStatus.PROCESSING ||
@@ -101,7 +103,7 @@ object EntityStackManager {
             entityTracker.remove(entity.uuid)
 
             if (config.deleteEntireStackOnKill) {
-                // Generate drops for each entity in the stack
+                // Generate drops and XP for each entity in the stack
                 repeat(currentStackSize - 1) {
                     world.server.execute {
                         try {
@@ -115,11 +117,18 @@ object EntityStackManager {
                                 noClip = true
                                 isInvisible = true
                                 boundingBox = boundingBox.shrink(0.0, 0.0, 0.0)
+
                                 // Copy relevant properties from the original entity
                                 (this as? LivingEntity)?.let { living ->
                                     // Set to 1 HP so it's alive when spawned
                                     living.health = 1f
-
+                                    // Copy baby state if the original was a baby
+                                    if (entity is LivingEntity && entity.isBaby) {
+                                        when (living) {
+                                            is PassiveEntity -> living.breedingAge = -24000  // Set as baby
+                                            // Add other specific entity types if needed
+                                        }
+                                    }
                                     // Copy equipment if KeepOriginalStackedmobondeath is true
                                     if (config.preserveOriginalEntityOnDeath) {
                                         (entity as? LivingEntity)?.let { originalEntity ->
@@ -131,15 +140,23 @@ object EntityStackManager {
                                 }
                             }
 
-                            // Spawn and then kill to generate drops
+                            // Spawn and then kill to generate drops and XP
                             entityToKill?.let { newEntity ->
                                 if (world.spawnEntity(newEntity)) {
-                                    // Use damage to kill it properly
+                                    // If killed by a player, use player damage source to ensure XP drops
                                     (newEntity as? LivingEntity)?.let { living ->
-                                        living.damage(
-                                            entity.damageSources.generic(),
-                                            Float.MAX_VALUE
-                                        )
+                                        if (attacker != null) {
+                                            // Use playerAttack directly from damageSources
+                                            living.damage(
+                                                world.damageSources.playerAttack(attacker),
+                                                Float.MAX_VALUE
+                                            )
+                                        } else {
+                                            living.damage(
+                                                world.damageSources.generic(),
+                                                Float.MAX_VALUE
+                                            )
+                                        }
                                     } ?: newEntity.kill()
                                 }
                             }
@@ -181,8 +198,10 @@ object EntityStackManager {
         val yaw: Float,
         val pitch: Float,
         val stackSize: Int,
-        var equipmentToCopy: Map<EquipmentSlot, ItemStack>? = null
+        var equipmentToCopy: Map<EquipmentSlot, ItemStack>? = null,
+        var isBaby: Boolean = false  // Add baby state parameter
     )
+
 
     private fun safelySpawnReplacement(params: SpawnParameters) {
         try {
@@ -220,11 +239,38 @@ object EntityStackManager {
         }
     }
 
-    private fun isValidForMerge(entity: LivingEntity): Boolean =
-        entity.isAlive && !entity.isRemoved && entity.health > 0 &&
-                entityTracker[entity.uuid] != EntityStatus.DYING &&
-                entityTracker[entity.uuid] != EntityStatus.PROCESSING &&
-                !isEntityExcluded(entity)
+    private fun isPlayerNamed(entity: Entity): Boolean {
+        // First check if it's part of our stacking system
+        if (entity is StackDataProvider) {
+            // If it's already part of a stack, it's not considered player-named
+            if (entity.isStackedCompat()) {
+                return false
+            }
+        }
+
+        // Now check if it has a custom name
+        return entity.customName != null
+    }
+
+    private fun isValidForMerge(entity: LivingEntity): Boolean {
+        // Quick initial checks
+        if (!entity.isAlive ||
+            entity.isRemoved ||
+            entity.health <= 0 ||
+            entityTracker[entity.uuid] == EntityStatus.DYING ||
+            entityTracker[entity.uuid] == EntityStatus.PROCESSING ||
+            isEntityExcluded(entity)) {
+            return false
+        }
+
+        // If the entity is player-named (and not part of a stack)
+        if (isPlayerNamed(entity)) {
+            return config.stackPlayerNamedEntity // Only allow if player-named stacking is enabled
+        }
+
+        // Allow merging for all other cases
+        return true
+    }
 
     private fun isEntityExcluded(entity: Entity): Boolean =
         entity is PlayerEntity || // Exclude players
@@ -282,18 +328,45 @@ object EntityStackManager {
             try {
                 entityTracker[target.uuid] = EntityStatus.PROCESSING
                 var totalStack = stackTarget.getStackSizeCompat()
+                val maxSize = config.maxStackSize
 
-                nearbyEntities.forEach { other ->
-                    (other as? StackDataProvider)?.takeIf { isValidForMerge(other) }?.let { stackOther ->
-                        if (totalStack + stackOther.getStackSizeCompat() <= config.maxStackSize) {
-                            entityTracker[other.uuid] = EntityStatus.PROCESSING
-                            totalStack += stackOther.getStackSizeCompat()
-                            other.discard()
-                            processed.add(other.uuid)
-                            entityTracker.remove(other.uuid)
+                // Convert to sequence for early termination without break
+                nearbyEntities.asSequence()
+                    .takeWhile { totalStack < maxSize }
+                    .forEach { other ->
+                        (other as? StackDataProvider)?.takeIf { isValidForMerge(other) }?.let { stackOther ->
+                            val otherSize = stackOther.getStackSizeCompat()
+                            val potentialTotal = totalStack + otherSize
+
+                            when {
+                                potentialTotal <= maxSize -> {
+                                    // Can merge entire stack
+                                    entityTracker[other.uuid] = EntityStatus.PROCESSING
+                                    totalStack = potentialTotal
+                                    other.discard()
+                                    processed.add(other.uuid)
+                                    entityTracker.remove(other.uuid)
+                                }
+
+                                totalStack < maxSize -> {
+                                    // Can only merge part of the stack
+                                    entityTracker[other.uuid] = EntityStatus.PROCESSING
+                                    val spaceLeft = maxSize - totalStack
+                                    val remainingStack = otherSize - spaceLeft
+
+                                    // Update the target stack by adding only the available space
+                                    totalStack += spaceLeft  // <-- Fixed: Add spaceLeft instead of setting to maxSize
+
+                                    // Update the other stack with remaining entities
+                                    stackOther.setStackSizeCompat(remainingStack)
+                                    updateEntityDisplay(other)
+
+                                    processed.add(other.uuid)
+                                    entityTracker.remove(other.uuid)
+                                }
+                            }
                         }
                     }
-                }
 
                 stackTarget.setStackSizeCompat(totalStack)
                 stackTarget.setStackedCompat(true)
@@ -348,4 +421,94 @@ object EntityStackManager {
 
         entityTracker.keys.removeIf { !existingUuids.contains(it) }
     }
+
+    fun handleStackSplit(
+        entity: Entity,
+        currentStackSize: Int,
+        name: Text,
+        player: PlayerEntity
+    ) {
+        if (!config.enabled || currentStackSize <= 1 ||
+            entityTracker[entity.uuid] == EntityStatus.PROCESSING ||
+            isEntityExcluded(entity)) return
+
+        try {
+            entityTracker[entity.uuid] = EntityStatus.PROCESSING
+            val world = entity.world as? ServerWorld ?: return
+
+            // Create new entity with stack size of 1
+            val spawnParams = SpawnParameters(
+                world,
+                entity.type,
+                entity.pos.add(0.0, SPAWN_HEIGHT_OFFSET, 0.0),
+                entity.yaw,
+                entity.pitch,
+                1
+            ).apply {
+                if (entity is LivingEntity) {
+                    // Copy equipment
+                    equipmentToCopy = EquipmentSlot.values().associateWith { slot ->
+                        entity.getEquippedStack(slot).copy()
+                    }
+                    // Store baby state
+                    isBaby = entity.isBaby
+                }
+            }
+
+            // Spawn the new named entity
+            world.server.execute {
+                spawnNamedEntity(spawnParams, name)
+            }
+
+            // Update original stack size
+            (entity as? StackDataProvider)?.let { provider ->
+                provider.setStackSizeCompat(currentStackSize - 1)
+                updateEntityDisplay(entity)
+            }
+        } finally {
+            entityTracker.remove(entity.uuid)
+        }
+    }
+
+
+    private fun spawnNamedEntity(params: SpawnParameters, name: Text) {
+        try {
+            // Create a completely fresh entity without any stack data
+            val newEntity = params.entityType.create(params.world)?.apply {
+                setPosition(params.position)
+                setYaw(params.yaw)
+                setPitch(params.pitch)
+
+                // Set the custom name
+                customName = name
+                isCustomNameVisible = true
+
+                // Apply baby state if entity is living
+                if (this is LivingEntity) {
+                    if (params.isBaby) {
+                        when (this) {
+                            is PassiveEntity -> this.breedingAge = -24000  // Set as baby
+                            // Add other specific entity types if needed
+                        }
+                    }
+
+                    // Copy equipment if needed
+                    params.equipmentToCopy?.let { equipment ->
+                        equipment.forEach { (slot, stack) ->
+                            this.equipStack(slot, stack)
+                        }
+                        // Set full health
+                        this.health = this.maxHealth
+                    }
+                }
+            } ?: return
+
+            // Spawn the entity
+            params.world.spawnEntity(newEntity)
+
+        } catch (e: Exception) {
+            logDebug("[ReduceAllTheLag] Named spawn error: ${e.message}")
+        }
+    }
+
 }

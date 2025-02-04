@@ -30,7 +30,6 @@ object ItemStackingManager {
     private val componentsToCheck = listOf(
         DataComponentTypes.CUSTOM_DATA,
         DataComponentTypes.ENCHANTMENTS,
-        DataComponentTypes.CUSTOM_NAME,
         DataComponentTypes.FIREWORKS,
         DataComponentTypes.TRIM,
         DataComponentTypes.ATTRIBUTE_MODIFIERS,
