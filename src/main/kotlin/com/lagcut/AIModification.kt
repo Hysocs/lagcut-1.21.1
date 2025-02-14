@@ -10,6 +10,8 @@ import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import com.lagcut.utils.LagCutConfig
+import com.blanketutils.utils.logDebug
+
 import kotlin.math.floor
 import kotlin.math.abs
 import java.util.Collections
@@ -20,7 +22,7 @@ import java.util.concurrent.TimeUnit
 object AIModification {
     // Config now only has an "enabled" checkbox.
     private val config = LagCutConfig.config.aiThrottling
-    private var debug = true
+    private var debug = false
 
     // Define the size of a chunk in blocks
     private const val CHUNK_SIZE = 16.0
@@ -72,6 +74,12 @@ object AIModification {
                 }
             }, 0, 1, TimeUnit.SECONDS)
         }
+    }
+
+    fun shutdown() {
+        // Shutdown the scheduler to prevent tasks from lingering after server stop.
+        ClearLag.scheduler.shutdownNow()
+        logDebug("[RATL] ClearLag scheduler shut down", "lagcut")
     }
 
     /**

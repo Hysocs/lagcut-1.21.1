@@ -1,11 +1,12 @@
 package com.lagcut
 
+import com.blanketutils.colors.KyoriHelper
+import com.blanketutils.utils.logDebug
+import com.lagcut.ClearLag.scheduler
 import net.minecraft.entity.ItemEntity
 import net.minecraft.registry.Registries
 import net.minecraft.component.DataComponentTypes
 import com.lagcut.utils.LagCutConfig
-import com.lagcut.utils.LagCutConfig.logDebug
-import com.lagcut.utils.MiniMessageHelper
 import net.minecraft.component.ComponentType
 import net.minecraft.item.ItemStack
 import net.minecraft.nbt.NbtCompound
@@ -13,6 +14,7 @@ import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
+
 
 object ItemStackingManager {
     private const val ABSOLUTE_MAX_STACK = 99  // New constant for maximum stack size
@@ -57,7 +59,7 @@ object ItemStackingManager {
 
     fun initialize() {
         if (!config.enabled) {
-            logDebug("[ReduceAllTheLag] Item stacking is disabled")
+            logDebug("[DEBUG] Item stacking is disabled", "lagcut")
             return
         }
         excludedItems = config.excludedItems.toSet()
@@ -69,6 +71,12 @@ object ItemStackingManager {
         if (!initialized) {
             initialize()
         }
+    }
+
+    fun shutdown() {
+        // Shutdown the scheduler to prevent tasks from lingering after server stop.
+        scheduler.shutdownNow()
+        logDebug("[DEBUG] ClearLag scheduler shut down", "lagcut")
     }
 
     fun tryMergeItemEntities(item: ItemEntity): Boolean {
@@ -109,7 +117,7 @@ object ItemStackingManager {
 
         // Check basic item exclusions
         if (excludedItems.contains(itemType)) {
-            logDebug("[DEBUG] Item $itemType is in excludedItems")
+            logDebug("[DEBUG] Item $itemType is in excludedItems", "lagcut")
             return true
         }
 
@@ -117,7 +125,7 @@ object ItemStackingManager {
         // Check dimension exclusions
         val dimensionId = (item.world as? ServerWorld)?.registryKey?.value?.toString()
         if (dimensionId != null && config.excludedDimensions.any { it.equals(dimensionId, ignoreCase = true) }) {
-            logDebug("[DEBUG] Item in excluded dimension: $dimensionId")
+            logDebug("[DEBUG] Item in excluded dimension: $dimensionId", "lagcut")
             return true
         }
 
@@ -132,13 +140,13 @@ object ItemStackingManager {
         val hasMatchingNbtPattern = config.nbtExclusionPatterns.any { pattern ->
             val matchFound = nbtString.contains(pattern)
             if (matchFound) {
-                logDebug("[DEBUG] Found matching NBT value: $pattern in NBT: $nbtString")
+                logDebug("[DEBUG] Found matching NBT value: $pattern in NBT: $nbtString", "lagcut")
             }
             matchFound
         }
 
         if (hasMatchingNbtPattern) {
-            logDebug("[DEBUG] Item matches NBT exclusion pattern")
+            logDebug("[DEBUG] Item matches NBT exclusion pattern", "lagcut")
             return true
         }
 
@@ -274,7 +282,10 @@ object ItemStackingManager {
                 .replace("<itemname>", itemName)
                 .replace("<itemamount>", item.stack.count.toString())
 
-            item.customName = MiniMessageHelper.parse(format)
+            // Use KyoriHelper to parse the format and convert to Minecraft Text
+            val formattedText = Text.of(KyoriHelper.stripFormatting(format))
+
+            item.customName = formattedText
             item.isCustomNameVisible = true
         } catch (e: Exception) {
             // Fallback to simple display
@@ -282,7 +293,6 @@ object ItemStackingManager {
             item.isCustomNameVisible = true
         }
     }
-
 
     private fun formatItemName(item: net.minecraft.item.Item): String =
         Registries.ITEM.getId(item).path

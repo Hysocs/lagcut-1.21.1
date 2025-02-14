@@ -1,6 +1,7 @@
 package com.lagcut.utils
 
 import com.blanketutils.command.CommandManager
+import com.blanketutils.utils.logDebug
 import com.lagcut.ClearLag
 import com.lagcut.EntityStackManager
 import com.lagcut.ItemStackingManager
@@ -66,9 +67,10 @@ object CommandRegistrar {
 
     private fun executeConfiguredClearCommand(context: CommandContext<ServerCommandSource>): Int {
         val source = context.source
-        ClearLag.clearEntities(source.server)
+        ClearLag.forceClear(source.server)
         return 1
     }
+
 
     private fun executeReloadCommand(context: CommandContext<ServerCommandSource>): Int {
         val source = context.source
@@ -82,16 +84,16 @@ object CommandRegistrar {
                 ItemStackingManager.reinitialize()
 
                 CommandManager.sendSuccess(source, "§aLagCut configuration successfully reloaded!", true)
-                LagCutConfig.logDebug("Configuration reloaded successfully.")
+                logDebug("Configuration reloaded successfully.", "lagcut")
                 return 1
             } else {
                 CommandManager.sendError(source, "§cFailed to reload configuration: Invalid config state")
-                LagCutConfig.logDebug("Failed to reload configuration: Invalid config state")
+                logDebug("Failed to reload configuration: Invalid config state", "lagcut")
                 return 0
             }
         } catch (e: Exception) {
             CommandManager.sendError(source, "§cFailed to reload configuration: ${e.message}")
-            LagCutConfig.logDebug("Error reloading configuration: ${e.message}")
+            logDebug("Error reloading configuration: ${e.message}", "lagcut")
             e.printStackTrace()
             return 0
         }

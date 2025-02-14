@@ -3,15 +3,14 @@
 	"id": "lagcut",
 	"version": "${version}",
 	"name": "LagCut",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "LC is a general optimization mod",
 	"authors": [
-		"Me!"
+		"Hysocs"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"discord": "https://discord.gg/nrENPTmQKt"
 	},
-	"license": "CC0-1.0",
+	"license": "GNU Lesser General Public License v3",
 	"icon": "assets/lagcut/icon.png",
 	"environment": "*",
 	"entrypoints": {

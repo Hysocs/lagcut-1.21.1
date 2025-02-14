@@ -1,10 +1,10 @@
 package com.lagcut
 
+import com.blanketutils.colors.KyoriHelper
 import com.lagcut.api.StackDataProvider
 import com.lagcut.utils.LagCutConfig
-import com.lagcut.utils.LagCutConfig.logDebug
-import com.lagcut.utils.MiniMessageHelper
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
+import com.blanketutils.utils.logDebug
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.EquipmentSlot
@@ -12,23 +12,25 @@ import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.passive.PassiveEntity
 import net.minecraft.entity.player.PlayerEntity // Import PlayerEntity
 import net.minecraft.item.ItemStack
+import net.minecraft.server.MinecraftServer
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
 import net.minecraft.util.math.Vec3d
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.collections.Set
 
 object EntityStackManager {
     private const val SPAWN_HEIGHT_OFFSET = 0.1
     private const val MIN_STACK_SIZE = 1
 
+    // Fraction of living entities to sample each merge tick (0.25 = 25%)
+    private const val MERGE_SAMPLE_FRACTION = 0.25
+
     private enum class EntityStatus { STACKED, DYING, PROCESSING }
     private val entityTracker = ConcurrentHashMap<UUID, EntityStatus>()
-
-    private var tickCounter = 0
-    private var initialized = false
-    private var isEventRegistered = false
 
     // Replace lazy with mutable property
     private var excludedEntities: Set<String> = emptySet()
@@ -36,44 +38,53 @@ object EntityStackManager {
     // Keep config accessor for convenience
     private val config get() = LagCutConfig.config.entityStacking
 
+    // Create a scheduler similar to ClearLag's implementation
+    private val scheduler = Executors.newSingleThreadScheduledExecutor()
+
+    private var initialized = false
+
     fun reinitialize() {
         // Update excluded entities
         excludedEntities = config.excludedEntities.toSet()
 
         if (!initialized) {
             initialize()
-        } else if (config.enabled && !isEventRegistered) {
-            // Re-register tick event if needed
-            registerTickEvent()
+        } else if (config.enabled) {
+            // Scheduler already registered
         }
     }
 
     fun initialize() {
         if (!config.enabled) {
-            logDebug("[ReduceAllTheLag] Entity stacking is disabled")
+            logDebug("[DEBUG] Entity stacking is disabled", "lagcut")
             return
         }
 
         excludedEntities = config.excludedEntities.toSet()
-        registerTickEvent()
+        registerScheduler()
         initialized = true
     }
 
-    private fun registerTickEvent() {
-        if (!isEventRegistered) {
-            ServerTickEvents.END_SERVER_TICK.register { server ->
-                try {
-                    if (++tickCounter % config.stackingFrequencyTicks == 0) {
-                        server.worlds.filterIsInstance<ServerWorld>().forEach(::processMerges)
+    fun shutdown() {
+        // Shutdown the scheduler to prevent tasks from lingering after server stop.
+        ClearLag.scheduler.shutdownNow()
+        logDebug("[DEBUG] ClearLag scheduler shut down", "lagcut")
+    }
+
+    private fun registerScheduler() {
+        ServerLifecycleEvents.SERVER_STARTED.register { server: MinecraftServer ->
+            // Convert stacking frequency ticks to seconds (at 20 ticks per second) - minimum 1 second
+            val periodSeconds = maxOf(1L, config.stackingFrequencyTicks.toLong() / 20L)
+            scheduler.scheduleAtFixedRate({
+                server.execute {
+                    server.worlds.filterIsInstance<ServerWorld>().forEach { world ->
+                        processMerges(world)
                         if (config.clearStacksOnServerStop) {
                             cleanupTracker(server.worlds)
                         }
                     }
-                } catch (e: Exception) {
-                    logDebug("[ReduceAllTheLag] Tick error: ${e.message}")
                 }
-            }
-            isEventRegistered = true
+            }, 0, periodSeconds, TimeUnit.SECONDS)
         }
     }
 
@@ -120,16 +131,14 @@ object EntityStackManager {
 
                                 // Copy relevant properties from the original entity
                                 (this as? LivingEntity)?.let { living ->
-                                    // Set to 1 HP so it's alive when spawned
-                                    living.health = 1f
-                                    // Copy baby state if the original was a baby
+                                    living.health = 1f // Set to 1 HP so it's alive when spawned
                                     if (entity is LivingEntity && entity.isBaby) {
                                         when (living) {
                                             is PassiveEntity -> living.breedingAge = -24000  // Set as baby
                                             // Add other specific entity types if needed
                                         }
                                     }
-                                    // Copy equipment if KeepOriginalStackedmobondeath is true
+                                    // Copy equipment if configured
                                     if (config.preserveOriginalEntityOnDeath) {
                                         (entity as? LivingEntity)?.let { originalEntity ->
                                             for (slot in EquipmentSlot.values()) {
@@ -140,13 +149,12 @@ object EntityStackManager {
                                 }
                             }
 
-                            // Spawn and then kill to generate drops and XP
+                            // Spawn and kill the entity to generate drops and XP without immunity
                             entityToKill?.let { newEntity ->
                                 if (world.spawnEntity(newEntity)) {
                                     // If killed by a player, use player damage source to ensure XP drops
                                     (newEntity as? LivingEntity)?.let { living ->
                                         if (attacker != null) {
-                                            // Use playerAttack directly from damageSources
                                             living.damage(
                                                 world.damageSources.playerAttack(attacker),
                                                 Float.MAX_VALUE
@@ -161,7 +169,7 @@ object EntityStackManager {
                                 }
                             }
                         } catch (e: Exception) {
-                            logDebug("[ReduceAllTheLag] Error spawning entity for drops: ${e.message}")
+                            logDebug("[DEBUG] Error spawning entity for drops: ${e.message}", "lagcut")
                         }
                     }
                 }
@@ -202,7 +210,6 @@ object EntityStackManager {
         var isBaby: Boolean = false  // Add baby state parameter
     )
 
-
     private fun safelySpawnReplacement(params: SpawnParameters) {
         try {
             val newEntity = params.entityType.create(params.world)?.apply {
@@ -235,7 +242,7 @@ object EntityStackManager {
                 entityTracker[newEntity.uuid] = EntityStatus.STACKED
             }
         } catch (e: Exception) {
-            logDebug("[ReduceAllTheLag] Spawn error: ${e.message}")
+            logDebug("[DEBUG] Spawn error: ${e.message}", "lagcut")
         }
     }
 
@@ -284,20 +291,20 @@ object EntityStackManager {
 
         // Check entity type exclusions
         if (config.excludedEntityTypes.any { it.equals(entityType, ignoreCase = true) }) {
-            logDebug("[DEBUG] Entity type $entityType is in excludedEntityTypes")
+            logDebug("[DEBUG] Entity type $entityType is in excludedEntityTypes", "lagcut")
             return true
         }
 
         // Check specific entity exclusions
         if (excludedEntities.contains(EntityType.getId(entity.type).toString())) {
-            logDebug("[DEBUG] Entity $entityType is in excludedEntities")
+            logDebug("[DEBUG] Entity $entityType is in excludedEntities", "lagcut")
             return true
         }
 
         // Check dimension exclusions
         val dimensionId = (entity.world as? ServerWorld)?.registryKey?.value?.toString()
         if (dimensionId != null && config.excludedDimensions.any { it.equals(dimensionId, ignoreCase = true) }) {
-            logDebug("[DEBUG] Entity in excluded dimension: $dimensionId")
+            logDebug("[DEBUG] Entity in excluded dimension: $dimensionId", "lagcut")
             return true
         }
 
@@ -306,46 +313,42 @@ object EntityStackManager {
         entity.writeNbt(nbt)
 
         val hasMatchingNbtPattern = config.nbtExclusionPatterns.any { pattern ->
-            // Convert NBT to string for raw searching
             val nbtString = nbt.toString()
-
-            // Search for the pattern in the raw NBT string
             val matchFound = nbtString.contains(pattern)
-
             if (matchFound) {
-                logDebug("[DEBUG] Found matching NBT value: $pattern in NBT: $nbtString")
+                logDebug("[DEBUG] Found matching NBT value: $pattern in NBT: $nbtString", "lagcut")
             }
-
             matchFound
         }
 
         if (hasMatchingNbtPattern) {
-            logDebug("[DEBUG] Entity matches NBT exclusion pattern")
+            logDebug("[DEBUG] Entity matches NBT exclusion pattern", "lagcut")
             return true
         }
 
         return false
     }
 
+    // --- Refactored processMerges ---
+    // Instead of iterating over every living entity, we sample a fraction to reduce load.
     private fun processMerges(world: ServerWorld) {
         if (!config.enabled) return
 
         val processed = mutableSetOf<UUID>()
+        val livingEntities = world.iterateEntities().filterIsInstance<LivingEntity>().toList()
+        val sampleSize = (livingEntities.size * MERGE_SAMPLE_FRACTION).toInt().coerceAtLeast(1)
+        val sampledEntities = livingEntities.shuffled().take(sampleSize)
+        for (entity in sampledEntities) {
+            if (processed.contains(entity.uuid)) continue
+            if (!isValidForMerge(entity)) continue
+            if (entityTracker[entity.uuid] == EntityStatus.PROCESSING) continue
 
-        world.iterateEntities()
-            .filterIsInstance<LivingEntity>()
-            .filter { shouldProcessEntityMerge(it, processed) }
-            .forEach { entity ->
-                findValidNearbyEntities(world, entity, processed)
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { safelyMergeEntityGroup(entity, it, processed) }
+            val nearbyEntities = findValidNearbyEntities(world, entity, processed)
+            if (nearbyEntities.isNotEmpty()) {
+                safelyMergeEntityGroup(entity, nearbyEntities, processed)
             }
+        }
     }
-
-    private fun shouldProcessEntityMerge(entity: LivingEntity, processed: Set<UUID>): Boolean =
-        !processed.contains(entity.uuid) &&
-                isValidForMerge(entity) &&
-                entityTracker[entity.uuid] != EntityStatus.PROCESSING
 
     private fun findValidNearbyEntities(
         world: ServerWorld,
@@ -363,10 +366,9 @@ object EntityStackManager {
             other is LivingEntity &&                    // Must be a living entity
                     other.type == entity.type &&            // Must be same entity type
                     !processed.contains(other.uuid) &&       // Not already processed
-                    isValidForMerge(other) &&               // Passes basic merge checks
-                    (config.stackBabyWithAdult ||           // Either allow baby/adult stacking
-                            other.isBaby == entity.isBaby)         // Or require matching baby status
-        }.filterIsInstance<LivingEntity>()              // Ensure we only return LivingEntities
+                    isValidForMerge(other) &&                // Passes basic merge checks
+                    (config.stackBabyWithAdult || other.isBaby == entity.isBaby)
+        }.filterIsInstance<LivingEntity>()
     }
 
     private fun safelyMergeEntityGroup(
@@ -380,7 +382,6 @@ object EntityStackManager {
                 var totalStack = stackTarget.getStackSizeCompat()
                 val maxSize = config.maxStackSize
 
-                // Convert to sequence for early termination without break
                 nearbyEntities.asSequence()
                     .takeWhile { totalStack < maxSize }
                     .forEach { other ->
@@ -405,7 +406,7 @@ object EntityStackManager {
                                     val remainingStack = otherSize - spaceLeft
 
                                     // Update the target stack by adding only the available space
-                                    totalStack += spaceLeft  // <-- Fixed: Add spaceLeft instead of setting to maxSize
+                                    totalStack += spaceLeft
 
                                     // Update the other stack with remaining entities
                                     stackOther.setStackSizeCompat(remainingStack)
@@ -436,6 +437,9 @@ object EntityStackManager {
                 customName = null
                 isCustomNameVisible = false
                 setCustomNameVisible(false)
+                writeNbt(net.minecraft.nbt.NbtCompound().apply {
+                    putBoolean("PersistenceRequired", false)
+                })
             }
             return
         }
@@ -444,11 +448,13 @@ object EntityStackManager {
             val size = stackSize ?: stackEntity.getStackSizeCompat()
 
             if (size <= 1) {
-                // Remove custom name when stack size is 1
                 entity.apply {
                     customName = null
                     isCustomNameVisible = false
                     setCustomNameVisible(false)
+                    writeNbt(net.minecraft.nbt.NbtCompound().apply {
+                        putBoolean("PersistenceRequired", false)
+                    })
                 }
                 return
             }
@@ -459,15 +465,21 @@ object EntityStackManager {
 
             try {
                 entity.apply {
-                    customName = MiniMessageHelper.parse(format)
+                    customName = Text.of(KyoriHelper.stripFormatting(format))
                     isCustomNameVisible = true
                     setCustomNameVisible(true)
+                    writeNbt(net.minecraft.nbt.NbtCompound().apply {
+                        putBoolean("PersistenceRequired", false)
+                    })
                 }
             } catch (e: Exception) {
                 entity.apply {
                     customName = Text.literal("${entity.type.name.string} x$size")
                     isCustomNameVisible = true
                     setCustomNameVisible(true)
+                    writeNbt(net.minecraft.nbt.NbtCompound().apply {
+                        putBoolean("PersistenceRequired", false)
+                    })
                 }
             }
         }
@@ -506,21 +518,17 @@ object EntityStackManager {
                 1
             ).apply {
                 if (entity is LivingEntity) {
-                    // Copy equipment
                     equipmentToCopy = EquipmentSlot.values().associateWith { slot ->
                         entity.getEquippedStack(slot).copy()
                     }
-                    // Store baby state
                     isBaby = entity.isBaby
                 }
             }
 
-            // Spawn the new named entity
             world.server.execute {
                 spawnNamedEntity(spawnParams, name)
             }
 
-            // Update original stack size
             (entity as? StackDataProvider)?.let { provider ->
                 provider.setStackSizeCompat(currentStackSize - 1)
                 updateEntityDisplay(entity)
@@ -530,47 +538,36 @@ object EntityStackManager {
         }
     }
 
-
     private fun spawnNamedEntity(params: SpawnParameters, name: Text) {
         try {
-            // Create a completely fresh entity without any stack data
             val newEntity = params.entityType.create(params.world)?.apply {
                 setPosition(params.position)
                 setYaw(params.yaw)
                 setPitch(params.pitch)
 
-                // Only set the custom name if nametags are enabled
                 if (config.enableNameTags) {
                     customName = name
                     isCustomNameVisible = true
                 }
 
-                // Apply baby state if entity is living
                 if (this is LivingEntity) {
                     if (params.isBaby) {
                         when (this) {
-                            is PassiveEntity -> this.breedingAge = -24000  // Set as baby
-                            // Add other specific entity types if needed
+                            is PassiveEntity -> this.breedingAge = -24000
                         }
                     }
-
-                    // Copy equipment if needed
                     params.equipmentToCopy?.let { equipment ->
                         equipment.forEach { (slot, stack) ->
                             this.equipStack(slot, stack)
                         }
-                        // Set full health
                         this.health = this.maxHealth
                     }
                 }
             } ?: return
 
-            // Spawn the entity
             params.world.spawnEntity(newEntity)
-
         } catch (e: Exception) {
-            logDebug("[ReduceAllTheLag] Named spawn error: ${e.message}")
+            logDebug("[DEBUG] Named spawn error: ${e.message}", "lagcut")
         }
     }
-
 }

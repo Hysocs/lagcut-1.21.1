@@ -2,7 +2,6 @@ package com.lagcut
 
 import com.lagcut.utils.CommandRegistrar
 import com.lagcut.utils.LagCutConfig
-
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.minecraft.server.MinecraftServer
@@ -32,6 +31,11 @@ object Lagcut : ModInitializer {
 
 		ServerLifecycleEvents.SERVER_STOPPING.register {
 			server = null
+			// Shutdown open executors from our mod
+			ClearLag.shutdown()
+			EntityStackManager.shutdown()
+			ItemStackingManager.shutdown()
+			AIModification.shutdown()
 		}
 	}
 
@@ -53,7 +57,6 @@ object Lagcut : ModInitializer {
 					server.execute {
 						AIModification.initialize()
 						ClearLag.initialize()
-
 					}
 				} else {
 					logger.warn("Server is stopping or stopped. Skipping initialization tasks.")

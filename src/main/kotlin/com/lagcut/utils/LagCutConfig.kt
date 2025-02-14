@@ -3,6 +3,7 @@ package com.lagcut.utils
 import com.blanketutils.config.ConfigData
 import com.blanketutils.config.ConfigManager
 import com.blanketutils.config.ConfigMetadata
+import com.blanketutils.utils.LogDebug
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
@@ -17,7 +18,6 @@ data class LagReductionConfig(
     var entityStacking: EntityStackingSettings = EntityStackingSettings(),
     var itemStacking: ItemStackingSettings = ItemStackingSettings()
 ) : ConfigData
-
 
 data class EntityStackingSettings(
     var enabled: Boolean = true,
@@ -48,7 +48,6 @@ data class EntityStackingSettings(
         "minecraft:the_nether"
     )
 )
-
 
 data class ItemStackingSettings(
     var enabled: Boolean = true,
@@ -88,7 +87,7 @@ data class ClearLagSettings(
     ),
     var excludedEntityTypes: List<String> = defaultExcludedEntityTypes,
     var excludedLabels: List<String> = defaultExcludedLabels,
-    var nbtExclusionPatterns: List<String> = listOf("Level=100"),
+    var nbtExclusionPatterns: List<String> = listOf("Plush", "tethered"),
     var excludedDimensions: List<String> = listOf(
         "minecraft:the_end",
         "minecraft:the_nether"
@@ -96,13 +95,13 @@ data class ClearLagSettings(
 ) {
     companion object {
         private val defaultBroadcastMessages = mapOf(
-            10 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>10</bold> seconds",
-            5 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>5</bold> seconds",
-            4 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>4</bold> seconds",
-            3 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>3</bold> seconds",
-            2 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>2</bold> seconds",
-            1 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> Entities will clear in <bold>1</bold> second",
-            0 to "<hover:LagCut is clearing entities to improve server performance><gradient:#ff5555:#55ff55><bold>LC</bold></gradient></hover> <entityamount> entities have been cleared"
+            10 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>10</bold> seconds",
+            5 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>5</bold> seconds",
+            4 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>4</bold> seconds",
+            3 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>3</bold> seconds",
+            2 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>2</bold> seconds",
+            1 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> Entities will clear in <bold>1</bold> second",
+            0 to "<gradient:#ff5555:#55ff55><bold>LC</bold></gradient> <entityamount> entities have been cleared"
         )
 
         private val defaultSoundSettings = mapOf(
@@ -152,6 +151,7 @@ data class AIThrottlingSettings(
 
 object LagCutConfig {
     private val logger = LoggerFactory.getLogger("LagCut")
+    private const val MOD_ID = "lagcut"  // Add this constant
     private const val CURRENT_VERSION = "1.0.0"
     private lateinit var configManager: ConfigManager<LagReductionConfig>
     private var isInitialized = false
@@ -336,16 +336,15 @@ object LagCutConfig {
         includeVersion = true
     )
 
-    fun logDebug(message: String) {
-        if (config.debugEnabled) {
-            logger.debug(message)
-        }
-    }
-
     fun initializeAndLoad() {
         if (!isInitialized) {
+            // First initialize LogDebug with default state (disabled)
+            LogDebug.init(MOD_ID, false)
+
+            // Then initialize and load config
             initialize()
             runBlocking { load() }
+
             isInitialized = true
         }
     }
@@ -360,11 +359,32 @@ object LagCutConfig {
     }
 
     private suspend fun load() {
+        println("[DEBUG-$MOD_ID] Loading configuration...")
         configManager.reloadConfig()
+        println("[DEBUG-$MOD_ID] Configuration loaded, updating debug state...")
+        updateDebugState()
+        println("[DEBUG-$MOD_ID] Debug state updated")
     }
 
     fun reloadBlocking() {
-        runBlocking { configManager.reloadConfig() }
+        println("[DEBUG-$MOD_ID] Starting config reload...")
+        runBlocking {
+            configManager.reloadConfig()
+            println("[DEBUG-$MOD_ID] Config reloaded, updating debug state...")
+            updateDebugState()
+            println("[DEBUG-$MOD_ID] Reload complete")
+        }
+        // Add a test debug message to verify debug state
+        LogDebug.debug("Config reload completed - this message should appear if debug is enabled", MOD_ID)
+    }
+
+    private fun updateDebugState() {
+        val currentConfig = configManager.getCurrentConfig()
+        val debugEnabled = currentConfig.debugEnabled
+        println("[DEBUG-$MOD_ID] Setting debug state to: $debugEnabled")
+        LogDebug.setDebugEnabledForMod(MOD_ID, debugEnabled)
+        // Add a test debug message
+        LogDebug.debug("Debug state updated - this message should appear if debug is enabled", MOD_ID)
     }
 
     val config: LagReductionConfig
