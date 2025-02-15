@@ -330,6 +330,7 @@ object ClearLag {
         return false
     }
 
+    // Modified version for direct pattern matching
     private fun shouldPreservePokemon(pokemon: Any, pokemonInstance: Any, pokemonName: String): Boolean {
         if (isEntityInBlocklist(pokemonName, true)) {
             logDebug("[DEBUG] Pokemon $pokemonName is in blocklist", "lagcut")
@@ -345,18 +346,18 @@ object ClearLag {
                     return true
                 }
             }
+
             val nbt = net.minecraft.nbt.NbtCompound()
             (pokemon as? net.minecraft.entity.Entity)?.writeNbt(nbt)
             val pokemonNbt = nbt.getCompound("Pokemon")
             if (pokemonNbt != null) {
+                val nbtString = pokemonNbt.toString()
                 val matchingNbtPatterns = config.nbtExclusionPatterns.filter { pattern ->
-                    val (key, value) = pattern.split("=", limit = 2)
-                    when {
-                        pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.STRING_TYPE.toInt()) ->
-                            pokemonNbt.getString(key).equals(value, ignoreCase = true)
-                        pokemonNbt.contains(key, net.minecraft.nbt.NbtElement.INT_TYPE.toInt()) ->
-                            pokemonNbt.getInt(key).toString() == value
-                        else -> false
+                    try {
+                        nbtString.contains(pattern)
+                    } catch (e: Exception) {
+                        logDebug("[DEBUG] Error matching NBT pattern $pattern: ${e.message}", "lagcut")
+                        false
                     }
                 }
                 if (matchingNbtPatterns.isNotEmpty()) {
@@ -364,6 +365,7 @@ object ClearLag {
                     return true
                 }
             }
+
             if (ReflectionCache.methods["isBattling"]?.invoke(pokemon) as? Boolean == true) {
                 logDebug("[DEBUG] Preserving battling Pokemon", "lagcut")
                 return true
