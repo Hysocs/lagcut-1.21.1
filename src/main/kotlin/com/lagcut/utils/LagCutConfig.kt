@@ -10,7 +10,7 @@ import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 
 data class LagReductionConfig(
-    override val version: String = "1.0.0",
+    override val version: String = "1.0.1",
     override val configId: String = "lagcut",
     var debugEnabled: Boolean = true,
     var aiThrottling: AIThrottlingSettings = AIThrottlingSettings(),
@@ -152,7 +152,7 @@ data class AIThrottlingSettings(
 object LagCutConfig {
     private val logger = LoggerFactory.getLogger("LagCut")
     private const val MOD_ID = "lagcut"  // Add this constant
-    private const val CURRENT_VERSION = "1.0.0"
+    private const val CURRENT_VERSION = "1.0.1"
     private lateinit var configManager: ConfigManager<LagReductionConfig>
     private var isInitialized = false
 

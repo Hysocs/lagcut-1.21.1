@@ -4,9 +4,11 @@ import com.lagcut.utils.CommandRegistrar
 import com.lagcut.utils.LagCutConfig
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
+import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
 import org.slf4j.LoggerFactory
 import java.util.concurrent.RejectedExecutionException
+import kotlin.system.measureTimeMillis
 
 object Lagcut : ModInitializer {
 	private val logger = LoggerFactory.getLogger("lagcut")
@@ -15,11 +17,50 @@ object Lagcut : ModInitializer {
 		private set
 
 	override fun onInitialize() {
+		try {
+			if (!waitForBlanketUtils()) {
+				throw RuntimeException("BlanketUtils is required but not loaded after waiting!")
+			}
+
+			// Safe to initialize our mod now
+			initializeMod()
+
+		} catch (e: Exception) {
+			logger.error("Failed to initialize Lagcut", e)
+			throw e // Propagate the error to prevent partial initialization
+		}
+	}
+
+	private fun waitForBlanketUtils(): Boolean {
+		val fabricLoader = FabricLoader.getInstance()
+		val maxWaitTime = 10000L // 10 seconds in milliseconds
+		val startTime = System.currentTimeMillis()
+
+		while (System.currentTimeMillis() - startTime < maxWaitTime) {
+			if (fabricLoader.isModLoaded("blanketutils")) {
+				logger.info("BlanketUtils found! Continuing initialization...")
+				return true
+			}
+
+			// Log every second
+			if ((System.currentTimeMillis() - startTime) % 1000 < 100) {
+				logger.info("Waiting for BlanketUtils to load... (${(System.currentTimeMillis() - startTime) / 1000}s)")
+			}
+
+			Thread.sleep(100) // Check every 100ms
+		}
+
+		logger.error("Timeout waiting for BlanketUtils!")
+		return false
+	}
+
+	private fun initializeMod() {
+		logger.info("Starting Lagcut initialization...")
+
 		LagCutConfig.initializeAndLoad()
 		CommandRegistrar.registerCommands()
 		EntityStackManager.initialize()
 		ItemStackingManager.initialize()
-		// Detect Cobblemon presence
 		detectCobblemon()
 
 		logger.info("Lagcut Mod Initialized!")
@@ -54,7 +95,7 @@ object Lagcut : ModInitializer {
 		try {
 			server?.let { server ->
 				if (!server.isStopping && !server.isStopped) {
-					server.execute {
+					server.executeSync {
 						AIModification.initialize()
 						ClearLag.initialize()
 					}

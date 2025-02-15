@@ -76,7 +76,7 @@ object EntityStackManager {
             // Convert stacking frequency ticks to seconds (at 20 ticks per second) - minimum 1 second
             val periodSeconds = maxOf(1L, config.stackingFrequencyTicks.toLong() / 20L)
             scheduler.scheduleAtFixedRate({
-                server.execute {
+                server.executeSync {
                     server.worlds.filterIsInstance<ServerWorld>().forEach { world ->
                         processMerges(world)
                         if (config.clearStacksOnServerStop) {
@@ -116,7 +116,7 @@ object EntityStackManager {
             if (config.deleteEntireStackOnKill) {
                 // Generate drops and XP for each entity in the stack
                 repeat(currentStackSize - 1) {
-                    world.server.execute {
+                    world.server.executeSync {
                         try {
                             val entityToKill = entity.type.create(world)?.apply {
                                 setPosition(pos)
@@ -192,7 +192,7 @@ object EntityStackManager {
                     }
                 }
 
-                world.server.execute { safelySpawnReplacement(spawnParams) }
+                world.server.executeSync { safelySpawnReplacement(spawnParams) }
             }
         } finally {
             entityTracker.remove(entity.uuid)
@@ -525,7 +525,7 @@ object EntityStackManager {
                 }
             }
 
-            world.server.execute {
+            world.server.executeSync {
                 spawnNamedEntity(spawnParams, name)
             }
 

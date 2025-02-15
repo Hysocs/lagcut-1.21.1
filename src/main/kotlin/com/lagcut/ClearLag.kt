@@ -73,7 +73,7 @@ object ClearLag {
         updateBlocklist()
         ServerLifecycleEvents.SERVER_STARTED.register { server: MinecraftServer ->
             scheduler.scheduleAtFixedRate({
-                server.execute {
+                server.executeSync {
                     handleClearLag(server)
                 }
             }, 0, 1, TimeUnit.SECONDS)
@@ -103,26 +103,33 @@ object ClearLag {
     private fun handleClearLag(server: MinecraftServer) {
         val now = System.currentTimeMillis()
         val intervalMs = (config.cleanupIntervalTicks * 50L).coerceAtLeast(1000L)
+
+        // Initialize nextClearTime if it hasn't been set
         if (nextClearTime == 0L) {
             nextClearTime = now + intervalMs
+            lastBroadcastSecond = -1
+            lastBroadcastSoundSecond = -1
         }
-        val remainingMs = nextClearTime - now
-        val secondsRemaining = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(0)
 
-        // Broadcast messages and sounds if configured and if the remaining time has changed.
-        if (secondsRemaining > 0) {
-            if (config.broadcastMessages.containsKey(secondsRemaining) &&
-                secondsRemaining != lastBroadcastSecond
-            ) {
-                val rawMessage = config.broadcastMessages[secondsRemaining]!!
-                logDebug("[DEBUG] handleClearLag: broadcast message for $secondsRemaining seconds is '$rawMessage'", "lagcut")
-                broadcast(server, rawMessage)
-                lastBroadcastSecond = secondsRemaining
+        // Calculate remaining time
+        val remainingMs = (nextClearTime - now).coerceAtLeast(0)
+        val secondsRemaining = (remainingMs / 1000).toInt()
+
+        // Handle broadcasts if we have a new second
+        if (secondsRemaining != lastBroadcastSecond) {
+            // Handle message broadcasts
+            config.broadcastMessages[secondsRemaining]?.let { message ->
+                // Skip the 0-second message as it's handled after clearing
+                if (secondsRemaining > 0) {
+                    val processedMessage = message.replace("<entityamount>", "entities")
+                    broadcast(server, processedMessage)
+                    logDebug("[DEBUG] handleClearLag: broadcast message for $secondsRemaining seconds: '$processedMessage'", "lagcut")
+                }
             }
-            if (config.broadcastsounds.containsKey(secondsRemaining) &&
-                secondsRemaining != lastBroadcastSoundSecond
-            ) {
-                val soundSetting = config.broadcastsounds[secondsRemaining]!!
+            lastBroadcastSecond = secondsRemaining
+
+            // Handle sound broadcasts
+            config.broadcastsounds[secondsRemaining]?.let { soundSetting ->
                 val soundId = Identifier.tryParse(soundSetting.sound)
                 if (soundId != null) {
                     val soundEvent = Registries.SOUND_EVENT.get(soundId)
@@ -143,12 +150,14 @@ object ClearLag {
             }
         }
 
-        // When the current time reaches or exceeds the next clear time, perform the clear
+        // Check if it's time to clear
         if (now >= nextClearTime) {
-            // Reset the next clear time relative to now to avoid drift.
+            // Set next clear time
             nextClearTime = now + intervalMs
             lastBroadcastSecond = -1
             lastBroadcastSoundSecond = -1
+
+            // Perform the clear
             clearEntitiesInChunks(server)
         }
     }
@@ -162,30 +171,34 @@ object ClearLag {
             val dimensionId = world.registryKey.value.toString()
             !config.excludedDimensions.any { it.equals(dimensionId, ignoreCase = true) }
         }
+
+        var totalEntitiesCleared = 0
+        var worldsProcessed = 0
+
         worldsToClear.forEachIndexed { index, world ->
             // Schedule each world's clear operation with a delay
             scheduler.schedule({
-                server.execute {
+                server.executeSync {
                     val pokemonCleared = if (Lagcut.isCobblemonPresent && config.clearCobblemonEntities)
                         clearPokemonEntities(world) else 0
                     val mobsCleared = if (config.clearMojangEntities) clearMobEntities(world) else 0
                     val itemsCleared = if (config.clearItemEntities) clearItemEntities(world) else 0
+
+                    val worldTotal = pokemonCleared + mobsCleared + itemsCleared
+                    totalEntitiesCleared += worldTotal
+                    worldsProcessed++
+
                     logDebug("[DEBUG] Cleared in ${world.registryKey.value}: Pokemon: $pokemonCleared, Mobs: $mobsCleared, Items: $itemsCleared", "lagcut")
+
+                    // If this was the last world, broadcast the final message
+                    if (worldsProcessed == worldsToClear.size) {
+                        val summary = config.broadcastMessages[0]?.replace("<entityamount>", totalEntitiesCleared.toString())
+                            ?: "Cleared $totalEntitiesCleared entities."
+                        broadcast(server, summary)
+                    }
                 }
             }, index * CHUNK_DELAY_MS, TimeUnit.MILLISECONDS)
         }
-        // Optionally, you can broadcast a summary message after all chunks are done.
-        scheduler.schedule({
-            server.execute {
-                val totalCleared = server.worlds.sumOf { world ->
-                    (if (Lagcut.isCobblemonPresent) clearPokemonEntities(world, true) else 0) +
-                            clearMobEntities(world) + clearItemEntities(world)
-                }
-                val summary = config.broadcastMessages[0]?.replace("<entityamount>", totalCleared.toString())
-                    ?: "Entities cleared."
-                broadcast(server, summary)
-            }
-        }, worldsToClear.size * CHUNK_DELAY_MS + 100, TimeUnit.MILLISECONDS)
     }
 
     private fun updateBlocklist() {
